@@ -5,16 +5,16 @@ import (
 	"html/template"
 	"io/ioutil"
 	"net/http"
+	"errors"
 )
 
-const templatesPath = "%v.html"
-const resourcesPath = "resources/%v"
+const txtFileExt = "%v.txt"
+const htmlFileExt = "%v.html"
 
 var viewHandler WikiHandler
 var editHandler WikiHandler
 var saveHandler WikiHandler
-
-//var errorHandler WikiHandler
+var errorHandler WikiHandler
 
 type Page struct {
 	Title string
@@ -30,10 +30,10 @@ func main() {
 	viewHandler = WikiHandler{uri: "/view/", handler: viewHandlerFunc}
 	editHandler = WikiHandler{uri: "/edit/", handler: editHandlerFunc}
 	saveHandler = WikiHandler{uri: "/save/", handler: saveHandlerFunc}
-	//errorHandler = WikiHandler{uri: "/error", handler: errorHandlerFunc
+	errorHandler = WikiHandler{uri: "/error", handler: errorHandlerFunc}
 
+	registerHandler(viewHandler, editHandler, saveHandler, errorHandler)
 	http.ListenAndServe(":8080", nil)
-	registerHandler(viewHandler, editHandler, saveHandler)
 }
 
 /* Register the Wiki handlers */
@@ -50,7 +50,7 @@ func viewHandlerFunc(w http.ResponseWriter, r *http.Request) {
 	p, err := loadPage(filename)
 	if err != nil {
 		fmt.Printf("[viewHandlerFunc] error loading file: %v\n", err.Error())
-		http.Redirect(w, r, "/edit/"+filename, http.StatusFound)
+		http.Redirect(w, r, editHandler.uri + filename, http.StatusFound)
 		return
 	}
 	renderTemplate(p, viewHandler, w)
@@ -74,7 +74,13 @@ func saveHandlerFunc(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		fmt.Printf("\n[saveHandlerFunc] Something went wrong %v\n", err.Error())
 	}
-	http.Redirect(w, r, viewHandler.uri+title, http.StatusFound)
+	http.Redirect(w, r, viewHandler.uri + title, http.StatusFound)
+}
+
+func errorHandlerFunc(w http.ResponseWriter, r *http.Request) {
+	err := errors.New("This aint working no more.")
+	http.Error(w, err.Error(), http.StatusInternalServerError)
+	return
 }
 
 func renderTemplate(p *Page, handler WikiHandler, w http.ResponseWriter) {
@@ -88,7 +94,6 @@ func renderTemplate(p *Page, handler WikiHandler, w http.ResponseWriter) {
 		http.Error(w, execErr.Error(), http.StatusInternalServerError)
 		return
 	}
-
 }
 
 func getFilename(r *http.Request, handler WikiHandler) string {
@@ -96,13 +101,12 @@ func getFilename(r *http.Request, handler WikiHandler) string {
 }
 
 func (p *Page) save() error {
-	filename := fmt.Sprintf(resourcesPath, p.Title+".txt")
-	fmt.Printf("saving to %v", filename)
+	filename := fmt.Sprintf(txtFileExt, p.Title)
 	return ioutil.WriteFile(filename, p.Body, 0600)
 }
 
 func loadPage(title string) (*Page, error) {
-	filename := fmt.Sprintf(resourcesPath, title+".txt")
+	filename := fmt.Sprintf(txtFileExt, title)
 	body, err := ioutil.ReadFile(filename)
 	if err != nil {
 		return nil, err
@@ -111,11 +115,14 @@ func loadPage(title string) (*Page, error) {
 }
 
 func (h *WikiHandler) templatePath() string {
-	templatePath := fmt.Sprintf(templatesPath, h.name())
+	templatePath := fmt.Sprintf(htmlFileExt, h.name())
 	fmt.Printf("Template path for %v is %v\n", h.uri, templatePath)
 	return templatePath
 }
 
 func (h *WikiHandler) name() string {
-	return h.uri[1 : len(h.uri)-1]
+	if lastChar := string(h.uri[len(h.uri) - 1]); lastChar == "/" {
+		return h.uri[1 : len(h.uri) - 1]
+	}
+	return h.uri[1:]
 }
