@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"errors"
+	"regexp"
 )
 
 const txtFileExt = "%v.txt"
@@ -15,6 +16,8 @@ var viewHandler WikiHandler
 var editHandler WikiHandler
 var saveHandler WikiHandler
 var errorHandler WikiHandler
+var templates = template.Must(template.ParseFiles("edit.html", "view.html"))
+var validPath = regexp.MustCompile("^/(edit|save|view)/([a-zA-Z0-9]+)$")
 
 type Page struct {
 	Title string
@@ -46,7 +49,10 @@ func registerHandler(wikiHandlers ...WikiHandler) {
 
 /* View the requested page. */
 func viewHandlerFunc(w http.ResponseWriter, r *http.Request) {
-	filename := getFilename(r, viewHandler)
+	filename, err := getTitle(w, r)
+	if err != nil {
+		return
+	}
 	p, err := loadPage(filename)
 	if err != nil {
 		fmt.Printf("[viewHandlerFunc] error loading file: %v\n", err.Error())
@@ -57,22 +63,29 @@ func viewHandlerFunc(w http.ResponseWriter, r *http.Request) {
 }
 
 func editHandlerFunc(w http.ResponseWriter, r *http.Request) {
-	p, err := loadPage(getFilename(r, editHandler))
+	filename, err := getTitle(w, r)
+	if err != nil {
+		return
+	}
+	p, err := loadPage(filename)
 	if err != nil {
 		fmt.Printf("error loading file: %v\n", err.Error())
-		p = &Page{Title: getFilename(r, editHandler)}
+		p = &Page{Title: filename}
 	}
 	renderTemplate(p, editHandler, w)
 }
 
 func saveHandlerFunc(w http.ResponseWriter, r *http.Request) {
-	fmt.Println("Inside saveHandlerFunc")
-	title := getFilename(r, saveHandler)
+	title, err := getTitle(w, r)
+	if err != nil {
+		return
+	}
 	body := r.FormValue("body")
 	p := &Page{Title: title, Body: []byte(body)}
-	err := p.save()
-	if err != nil {
-		fmt.Printf("\n[saveHandlerFunc] Something went wrong %v\n", err.Error())
+	err2 := p.save()
+
+	if err2 != nil {
+		fmt.Printf("\n[saveHandlerFunc] Something went wrong %v\n", err2.Error())
 	}
 	http.Redirect(w, r, viewHandler.uri + title, http.StatusFound)
 }
@@ -84,20 +97,11 @@ func errorHandlerFunc(w http.ResponseWriter, r *http.Request) {
 }
 
 func renderTemplate(p *Page, handler WikiHandler, w http.ResponseWriter) {
-	t, err := template.ParseFiles(handler.templatePath())
+	err := templates.ExecuteTemplate(w, handler.templateName(), p)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	execErr := t.Execute(w, p)
-	if execErr != nil {
-		http.Error(w, execErr.Error(), http.StatusInternalServerError)
-		return
-	}
-}
-
-func getFilename(r *http.Request, handler WikiHandler) string {
-	return r.URL.Path[len(handler.uri):]
 }
 
 func (p *Page) save() error {
@@ -114,7 +118,7 @@ func loadPage(title string) (*Page, error) {
 	return &Page{Title: title, Body: body}, nil
 }
 
-func (h *WikiHandler) templatePath() string {
+func (h *WikiHandler) templateName() string {
 	templatePath := fmt.Sprintf(htmlFileExt, h.name())
 	fmt.Printf("Template path for %v is %v\n", h.uri, templatePath)
 	return templatePath
@@ -125,4 +129,13 @@ func (h *WikiHandler) name() string {
 		return h.uri[1 : len(h.uri) - 1]
 	}
 	return h.uri[1:]
+}
+
+func getTitle(w http.ResponseWriter, r *http.Request) (string, error) {
+	m := validPath.FindStringSubmatch(r.URL.Path)
+	if m == nil {
+		http.NotFound(w, r)
+		return "", errors.New("Invalid Page Title")
+	}
+	return m[2], nil // The title is the second subexpression.
 }
